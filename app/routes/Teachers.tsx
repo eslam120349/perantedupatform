@@ -40,7 +40,6 @@ type TeacherType = {
 
 type ChildType = { id: string; name: string; grade: string; };
 
-// 🔥 نفس الفلتر المستخدم في صفحة الهوم
 const subjectCategories = [
   { name: "الكل", ar: "الكل", icon: FaThLarge },
   { name: "الرياضيات", ar: "الرياضيات", icon: FaCalculator },
@@ -60,13 +59,23 @@ const ALL_SUBJECTS = [
 
 const DAYS = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
+// 🔥 تنسيق الوقت المطلوب: 9 ص، 10 ص، 11 ص، 12 م، 1 م، إلخ
 const TIME_SLOTS = [
-  { start: "08:00", end: "09:00" }, { start: "09:00", end: "10:00" },
-  { start: "10:00", end: "11:00" }, { start: "11:00", end: "12:00" },
-  { start: "12:00", end: "13:00" }, { start: "13:00", end: "14:00" },
-  { start: "14:00", end: "15:00" }, { start: "15:00", end: "16:00" },
-  { start: "16:00", end: "17:00" }, { start: "17:00", end: "18:00" },
-  { start: "18:00", end: "19:00" }, { start: "19:00", end: "20:00" },
+  { start: "08:00", label: "8 ص" },
+  { start: "09:00", label: "9 ص" },
+  { start: "10:00", label: "10 ص" },
+  { start: "11:00", label: "11 ص" },
+  { start: "12:00", label: "12 م" },
+  { start: "13:00", label: "1 م" },
+  { start: "14:00", label: "2 م" },
+  { start: "15:00", label: "3 م" },
+  { start: "16:00", label: "4 م" },
+  { start: "17:00", label: "5 م" },
+  { start: "18:00", label: "6 م" },
+  { start: "19:00", label: "7 م" },
+  { start: "20:00", label: "8 م" },
+  { start: "21:00", label: "9 م" },
+  { start: "22:00", label: "10 م" },
 ];
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
@@ -141,9 +150,15 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [selectedTime, setSelectedTime] = useState("");
   const [teacherBusySlots, setTeacherBusySlots] = useState<any[]>([]);
+  const [teacherUnavailableSlots, setTeacherUnavailableSlots] = useState<any[]>([]);
 
   useEffect(() => { loadChildren(); }, []);
-  useEffect(() => { if (teacher.user_id) loadTeacherSchedule(); }, [teacher.user_id]);
+  useEffect(() => { 
+    if (teacher.user_id) {
+      loadTeacherSchedule();
+      loadTeacherUnavailability();
+    }
+  }, [teacher.user_id]);
 
   async function loadChildren() {
     if (!supabase) return;
@@ -157,6 +172,7 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
     setChildrenLoading(false);
   }
 
+  // جلب الحصص المحجوزة
   async function loadTeacherSchedule() {
     const { data } = await supabase
       .from("schedules")
@@ -165,6 +181,47 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
       .eq("status", "scheduled");
     setTeacherBusySlots(data || []);
   }
+
+  // جلب الأوقات غير المتاحة
+  async function loadTeacherUnavailability() {
+    const { data } = await supabase
+      .from("teacher_unavailability")
+      .select("day_of_week, start_time, is_full_day")
+      .eq("teacher_id", teacher.user_id);
+    setTeacherUnavailableSlots(data || []);
+  }
+
+  // 🔥 دالة للتحقق من أن الوقت غير متاح (محجوز أو غير متاح)
+  const isSlotUnavailable = (day: number, time: string) => {
+    // التحقق من الحصص المحجوزة
+    const isBusy = teacherBusySlots.some(s => 
+      s.day_of_week === day && 
+      s.start_time?.slice(0, 5) === time
+    );
+    
+    if (isBusy) return true;
+
+    // التحقق من الأوقات غير المتاحة
+    const isUnavailable = teacherUnavailableSlots.some(u => {
+      // إذا كان اليوم كامل غير متاح
+      if (u.is_full_day && u.day_of_week === day) return true;
+      
+      // إذا كان الوقت محدد
+      if (u.day_of_week === day && u.start_time) {
+        const startHour = parseInt(u.start_time.split(':')[0]);
+        const slotHour = parseInt(time.split(':')[0]);
+        return slotHour >= startHour && slotHour < startHour + 1;
+      }
+      return false;
+    });
+
+    return isUnavailable;
+  };
+
+  // 🔥 الحصول على الأوقات المتاحة فقط
+  const getAvailableSlots = (day: number) => {
+    return TIME_SLOTS.filter(slot => !isSlotUnavailable(day, slot.start));
+  };
 
   const handleBook = async () => {
     if (!supabase || !selectedChild || !selectedSubject) {
@@ -179,19 +236,11 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
     setBookingLoading(true);
     setBookingError(null);
     try {
-      const { data: conflict } = await supabase
-        .from("schedules")
-        .select("id")
-        .eq("teacher_id", teacher.user_id)
-        .eq("day_of_week", selectedDay)
-        .eq("start_time", `${selectedTime}:00`)
-        .eq("status", "scheduled")
-        .maybeSingle();
-
-      if (conflict) { 
-        setBookingError("هذا الوقت محجوز بالفعل"); 
-        setBookingLoading(false); 
-        return; 
+      // التحقق من عدم وجود تعارض
+      if (isSlotUnavailable(selectedDay, selectedTime)) {
+        setBookingError("هذا الوقت غير متاح (محجوز أو المعلم غير متاح)");
+        setBookingLoading(false);
+        return;
       }
 
       const { data: existing } = await supabase
@@ -363,19 +412,36 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
 
                       {selectedDay !== null && (
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 3, maxHeight: 120, overflowY: "auto" }}>
-                          {TIME_SLOTS.map(slot => {
-                            const isBusy = teacherBusySlots.some(s => s.day_of_week === selectedDay && s.start_time?.slice(0, 5) === slot.start);
-                            return (
-                              <button key={slot.start} type="button" disabled={isBusy}
-                                onClick={() => setSelectedTime(slot.start)}
-                                style={{ padding: "6px 4px", border: "1px solid", borderColor: isBusy ? "rgba(229,57,53,0.4)" : selectedTime === slot.start ? "#8b1a2e" : isDark ? "rgba(255,255,255,0.12)" : "#d0ccc4", borderRadius: "2px", background: isBusy ? "rgba(229,57,53,0.1)" : selectedTime === slot.start ? "rgba(139,26,46,0.15)" : "transparent", color: isBusy ? "#e53935" : selectedTime === slot.start ? "#8b1a2e" : isDark ? "rgba(255,255,255,0.5)" : "#666", fontSize: 10, opacity: isBusy ? 0.5 : 1, cursor: isBusy ? "not-allowed" : "pointer" }}>
-                                {slot.start}
-                              </button>
-                            );
-                          })}
+                          {getAvailableSlots(selectedDay).map(slot => (
+                            <button 
+                              key={slot.start} 
+                              type="button"
+                              onClick={() => setSelectedTime(slot.start)}
+                              style={{ 
+                                padding: "6px 4px", 
+                                border: "1px solid", 
+                                borderColor: selectedTime === slot.start 
+                                  ? "#8b1a2e" 
+                                  : isDark ? "rgba(255,255,255,0.12)" : "#d0ccc4", 
+                                borderRadius: "2px", 
+                                background: selectedTime === slot.start 
+                                  ? "rgba(139,26,46,0.15)" 
+                                  : "transparent", 
+                                color: selectedTime === slot.start 
+                                  ? "#8b1a2e" 
+                                  : isDark ? "rgba(255,255,255,0.5)" : "#666", 
+                                fontSize: 10, 
+                                cursor: "pointer",
+                              }}
+                            >
+                              {slot.label}
+                            </button>
+                          ))}
                         </div>
                       )}
-                      <p style={{ fontSize: 9, color: isDark ? "rgba(255,255,255,0.3)" : "#aaa" }}>🟢 متاح | 🔴 مشغول</p>
+                      <p style={{ fontSize: 9, color: isDark ? "rgba(255,255,255,0.3)" : "#aaa" }}>
+                        🟢 الأوقات المتاحة فقط
+                      </p>
                     </div>
                   )}
                 </>
@@ -475,7 +541,6 @@ export default function TeachersPage() {
     finally { setLoading(false); }
   }
 
-  // 🔥🔥🔥 نفس فلتر صفحة الهوم
   const filteredTeachers = activeSubject === "الكل"
     ? teachers
     : teachers.filter(t => {
@@ -484,11 +549,9 @@ export default function TeachersPage() {
         return found || foundInSpecialty;
       });
 
-  // 🔥 تطبيق الفلاتر الإضافية (البحث، المتاح، الترتيب)
   const filtered = useMemo(() => {
     let list = [...filteredTeachers];
     
-    // فلتر البحث
     if (search.trim()) { 
       const q = search.trim().toLowerCase(); 
       list = list.filter((t) => 
@@ -498,10 +561,8 @@ export default function TeachersPage() {
       ); 
     }
     
-    // فلتر المتاح فقط
     if (onlyAvailable) list = list.filter((t) => t.available);
     
-    // الترتيب
     switch (sortBy) { 
       case "rating": list.sort((a, b) => b.rating - a.rating); break; 
       case "students": list.sort((a, b) => b.students - a.students); break; 
@@ -553,7 +614,6 @@ export default function TeachersPage() {
               {search && <button onClick={() => setSearch("")} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: isDark ? "rgba(255,255,255,0.4)" : "#aaa" }}><FaTimes /></button>}
             </div>
             <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-              {/* 🔥 نفس فلتر المواد من صفحة الهوم */}
               <div className="flex flex-wrap gap-2 flex-1">
                 {subjectCategories.map((sub) => {
                   const Icon = sub.icon;
