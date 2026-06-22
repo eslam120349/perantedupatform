@@ -59,7 +59,6 @@ const ALL_SUBJECTS = [
 
 const DAYS = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
-// 🔥 تنسيق الوقت المطلوب: 9 ص، 10 ص، 11 ص، 12 م، 1 م، إلخ
 const TIME_SLOTS = [
   { start: "08:00", label: "8 ص" },
   { start: "09:00", label: "9 ص" },
@@ -76,6 +75,14 @@ const TIME_SLOTS = [
   { start: "20:00", label: "8 م" },
   { start: "21:00", label: "9 م" },
   { start: "22:00", label: "10 م" },
+];
+
+// ─── Pricing Types ───────────────────────────────────────────────────────────
+const PRICING_TYPES = [
+  { key: "private", label: "برايفت (فردي)", icon: "👤", desc: "حصة فردية مع المدرس" },
+  { key: "group", label: "مجموعة (جماعي)", icon: "👥", desc: "حصة جماعية مع مجموعة طلاب" },
+  { key: "center", label: "سنتر", icon: "🏫", desc: "حصة في مركز تعليمي" },
+  { key: "online", label: "أونلاين", icon: "💻", desc: "حصة عبر الإنترنت" },
 ];
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
@@ -172,7 +179,6 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
     setChildrenLoading(false);
   }
 
-  // جلب الحصص المحجوزة
   async function loadTeacherSchedule() {
     const { data } = await supabase
       .from("schedules")
@@ -182,7 +188,6 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
     setTeacherBusySlots(data || []);
   }
 
-  // جلب الأوقات غير المتاحة
   async function loadTeacherUnavailability() {
     const { data } = await supabase
       .from("teacher_unavailability")
@@ -191,22 +196,15 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
     setTeacherUnavailableSlots(data || []);
   }
 
-  // 🔥 دالة للتحقق من أن الوقت غير متاح (محجوز أو غير متاح)
   const isSlotUnavailable = (day: number, time: string) => {
-    // التحقق من الحصص المحجوزة
     const isBusy = teacherBusySlots.some(s => 
       s.day_of_week === day && 
       s.start_time?.slice(0, 5) === time
     );
-    
     if (isBusy) return true;
 
-    // التحقق من الأوقات غير المتاحة
     const isUnavailable = teacherUnavailableSlots.some(u => {
-      // إذا كان اليوم كامل غير متاح
       if (u.is_full_day && u.day_of_week === day) return true;
-      
-      // إذا كان الوقت محدد
       if (u.day_of_week === day && u.start_time) {
         const startHour = parseInt(u.start_time.split(':')[0]);
         const slotHour = parseInt(time.split(':')[0]);
@@ -218,9 +216,35 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
     return isUnavailable;
   };
 
-  // 🔥 الحصول على الأوقات المتاحة فقط
   const getAvailableSlots = (day: number) => {
     return TIME_SLOTS.filter(slot => !isSlotUnavailable(day, slot.start));
+  };
+
+  // 🔥 دالة جلب الأسعار حسب شكل الداتا
+  const getPriceForType = (type: string) => {
+    // إذا لم يوجد pricing نهائياً
+    if (!teacher.pricing) return teacher.price || 0;
+    
+    // إذا كان unified موجود (unified: true)
+    if (teacher.pricing.unified === true) {
+      // جلب السعر من المفتاح المناسب (unified_private, unified_group, unified_center, unified_online)
+      const priceKey = `unified_${type}`;
+      const price = teacher.pricing[priceKey];
+      return price || teacher.price || 0;
+    }
+    
+    // إذا كان السعر موجود مباشرة في الـ pricing (بدون unified)
+    if (teacher.pricing[type]) {
+      return teacher.pricing[type] || 0;
+    }
+    
+    // القيمة الافتراضية
+    return teacher.price || 0;
+  };
+
+  const getDisplayPrice = () => {
+    const price = getPriceForType(selectedLessonType);
+    return price || teacher.price || 0;
   };
 
   const handleBook = async () => {
@@ -236,7 +260,6 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
     setBookingLoading(true);
     setBookingError(null);
     try {
-      // التحقق من عدم وجود تعارض
       if (isSlotUnavailable(selectedDay, selectedTime)) {
         setBookingError("هذا الوقت غير متاح (محجوز أو المعلم غير متاح)");
         setBookingLoading(false);
@@ -258,12 +281,13 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
         return; 
       }
 
+      const price = getPriceForType(selectedLessonType);
       const { error: stError } = await supabase.from("student_teachers").insert({
         student_id: selectedChild,
         teacher_id: teacher.user_id,
         subject: selectedSubject,
         lesson_type: selectedLessonType,
-        price: getPrice(),
+        price: price,
       });
 
       if (stError) { 
@@ -302,12 +326,6 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
     });
   };
 
-  const getPrice = () => {
-    if (!teacher.pricing || Object.keys(teacher.pricing).length === 0) return teacher.price;
-    if (teacher.pricing.unified) return teacher.pricing[`unified_${selectedLessonType}`] || teacher.price;
-    return teacher.price;
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.75)" }} onClick={onClose}>
       <div className="relative w-full max-w-lg shadow-2xl"
@@ -332,7 +350,7 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
         <div className="px-6 py-4 overflow-y-auto flex-1" style={{ scrollbarWidth: "thin", scrollbarColor: isDark ? "rgba(255,255,255,0.15) transparent" : "rgba(139,26,46,0.2) transparent" }}>
           
           <div className="grid grid-cols-4 gap-2 mb-4">
-            {[{ v: teacher.students, l: "طالب" }, { v: teacher.sessions, l: "حصة" }, { v: teacher.years_of_experience ? `${teacher.years_of_experience} سنة` : teacher.experience, l: "خبرة" }, { v: `${getPrice()} ج`, l: "/ حصة" }].map((s, i) => (
+            {[{ v: teacher.students, l: "طالب" }, { v: teacher.sessions, l: "حصة" }, { v: teacher.years_of_experience ? `${teacher.years_of_experience} سنة` : teacher.experience, l: "خبرة" }, { v: `${getDisplayPrice()} ج`, l: "/ حصة" }].map((s, i) => (
               <div key={i} className="p-2 text-center" style={{ background: isDark ? "rgba(255,255,255,0.04)" : "#f5f4f2", border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "#e8e4de"}`, borderRadius: "2px" }}>
                 <div className="text-sm font-extrabold" style={{ color: "#c9a84c" }}>{s.v}</div>
                 <div className="text-[10px] mt-0.5" style={{ color: isDark ? "rgba(255,255,255,0.35)" : "#888" }}>{s.l}</div>
@@ -384,65 +402,150 @@ function TeacherModal({ teacher, onClose, isDark }: { teacher: TeacherType; onCl
                   )}
 
                   {selectedSubject && (
-                    <div>
-                      <label className="text-xs mb-1 block" style={{ color: isDark ? "rgba(255,255,255,0.45)" : "#888" }}>نوع الحصة</label>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {[{ v: 'private', l: '👤 برايفت' }, { v: 'center', l: '🏫 سنتر' }, { v: 'online', l: '💻 أونلاين' }, { v: 'group', l: '👥 مجموعة' }].map(t => (
-                          <button key={t.v} onClick={() => setSelectedLessonType(t.v)} disabled={booked}
-                            className="px-2.5 py-2 text-xs font-medium transition-all"
-                            style={{ border: selectedLessonType === t.v ? "2px solid #8b1a2e" : `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "#d0ccc4"}`, background: selectedLessonType === t.v ? "rgba(139,26,46,0.15)" : "transparent", color: selectedLessonType === t.v ? "#8b1a2e" : isDark ? "rgba(255,255,255,0.5)" : "#666", borderRadius: "2px" }}>{t.l}</button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedSubject && (
-                    <div className="space-y-2">
-                      <label className="text-xs block" style={{ color: isDark ? "rgba(255,255,255,0.45)" : "#888" }}>اختر اليوم والوقت *</label>
-                      
-                      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-                        {DAYS.map((day, i) => (
-                          <button key={i} type="button"
-                            onClick={() => { setSelectedDay(i); setSelectedTime(""); }}
-                            style={{ padding: "5px 8px", border: "1px solid", borderColor: selectedDay === i ? "#8b1a2e" : isDark ? "rgba(255,255,255,0.12)" : "#d0ccc4", borderRadius: "2px", background: selectedDay === i ? "rgba(139,26,46,0.15)" : "transparent", color: selectedDay === i ? "#8b1a2e" : isDark ? "rgba(255,255,255,0.5)" : "#666", fontSize: 10, cursor: "pointer" }}>
-                            {day.slice(0, 3)}
-                          </button>
-                        ))}
-                      </div>
-
-                      {selectedDay !== null && (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 3, maxHeight: 120, overflowY: "auto" }}>
-                          {getAvailableSlots(selectedDay).map(slot => (
-                            <button 
-                              key={slot.start} 
-                              type="button"
-                              onClick={() => setSelectedTime(slot.start)}
-                              style={{ 
-                                padding: "6px 4px", 
-                                border: "1px solid", 
-                                borderColor: selectedTime === slot.start 
-                                  ? "#8b1a2e" 
-                                  : isDark ? "rgba(255,255,255,0.12)" : "#d0ccc4", 
-                                borderRadius: "2px", 
-                                background: selectedTime === slot.start 
-                                  ? "rgba(139,26,46,0.15)" 
-                                  : "transparent", 
-                                color: selectedTime === slot.start 
-                                  ? "#8b1a2e" 
-                                  : isDark ? "rgba(255,255,255,0.5)" : "#666", 
-                                fontSize: 10, 
-                                cursor: "pointer",
-                              }}
-                            >
-                              {slot.label}
-                            </button>
-                          ))}
+                    <>
+                      <div>
+                        <label className="text-xs mb-1 block" style={{ color: isDark ? "rgba(255,255,255,0.45)" : "#888" }}>
+                          <FaMoneyBillWave className="inline-block ml-1" /> اختر نوع الحصة والسعر
+                        </label>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {PRICING_TYPES.map((t) => {
+                            const price = getPriceForType(t.key);
+                            const isSelected = selectedLessonType === t.key;
+                            return (
+                              <button
+                                key={t.key}
+                                onClick={() => setSelectedLessonType(t.key)}
+                                disabled={booked}
+                                className="px-2.5 py-2 text-xs font-medium transition-all text-right"
+                                style={{
+                                  border: isSelected ? "2px solid #8b1a2e" : `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "#d0ccc4"}`,
+                                  background: isSelected ? "rgba(139,26,46,0.15)" : "transparent",
+                                  color: isSelected ? "#8b1a2e" : isDark ? "rgba(255,255,255,0.5)" : "#666",
+                                  borderRadius: "2px",
+                                }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold" style={{ color: isSelected ? "#8b1a2e" : "#c9a84c" }}>
+                                    {price || 0} ج
+                                  </span>
+                                  <span>
+                                    {t.icon} {t.label}
+                                  </span>
+                                </div>
+                                <div className="text-[8px] mt-0.5" style={{ color: isDark ? "rgba(255,255,255,0.3)" : "#aaa" }}>
+                                  {t.desc}
+                                </div>
+                              </button>
+                            );
+                          })}
                         </div>
-                      )}
-                      <p style={{ fontSize: 9, color: isDark ? "rgba(255,255,255,0.3)" : "#aaa" }}>
-                        🟢 الأوقات المتاحة فقط
-                      </p>
-                    </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-xs block" style={{ color: isDark ? "rgba(255,255,255,0.45)" : "#888" }}>
+                          <FaCalendarAlt className="inline-block ml-1" /> اختر اليوم والوقت *
+                        </label>
+                        
+                        <div className="grid grid-cols-7 gap-1.5">
+                          {DAYS.map((day, i) => {
+                            const isSelected = selectedDay === i;
+                            const hasAvailableSlots = getAvailableSlots(i).length > 0;
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => {
+                                  if (hasAvailableSlots) {
+                                    setSelectedDay(i);
+                                    setSelectedTime("");
+                                  }
+                                }}
+                                disabled={!hasAvailableSlots}
+                                className="py-2 px-1 text-[10px] font-medium transition-all duration-200 rounded-lg text-center"
+                                style={{
+                                  background: isSelected 
+                                    ? "#8b1a2e" 
+                                    : hasAvailableSlots 
+                                      ? (isDark ? "rgba(255,255,255,0.05)" : "#f5f4f2")
+                                      : "transparent",
+                                  border: isSelected 
+                                    ? "1px solid #8b1a2e" 
+                                    : hasAvailableSlots 
+                                      ? `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "#d0ccc4"}`
+                                      : `1px solid ${isDark ? "rgba(255,255,255,0.05)" : "#f0f0f0"}`,
+                                  color: isSelected 
+                                    ? "#fff" 
+                                    : hasAvailableSlots 
+                                      ? (isDark ? "#fff" : "#1a1a1a")
+                                      : (isDark ? "rgba(255,255,255,0.2)" : "#ccc"),
+                                  cursor: hasAvailableSlots ? "pointer" : "not-allowed",
+                                  opacity: hasAvailableSlots ? 1 : 0.4,
+                                }}
+                              >
+                                <div className="text-[9px] leading-tight">{day}</div>
+                                {hasAvailableSlots && (
+                                  <div className="text-[7px] mt-0.5" style={{ color: isSelected ? "rgba(255,255,255,0.6)" : "#4ade80" }}>
+                                    {getAvailableSlots(i).length} موعد
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {selectedDay !== null && (
+                          <div>
+                            <div className="text-xs mb-1.5" style={{ color: isDark ? "rgba(255,255,255,0.3)" : "#aaa" }}>
+                              الأوقات المتاحة لـ <span style={{ color: "#c9a84c" }}>{DAYS[selectedDay]}</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1.5 max-h-32 overflow-y-auto p-1">
+                              {getAvailableSlots(selectedDay).length > 0 ? (
+                                getAvailableSlots(selectedDay).map(slot => (
+                                  <button 
+                                    key={slot.start} 
+                                    type="button"
+                                    onClick={() => setSelectedTime(slot.start)}
+                                    className="py-1.5 text-[10px] font-medium transition-all duration-200 rounded-lg"
+                                    style={{ 
+                                      background: selectedTime === slot.start 
+                                        ? "#8b1a2e" 
+                                        : isDark ? "rgba(255,255,255,0.05)" : "#f5f4f2",
+                                      border: selectedTime === slot.start 
+                                        ? "1px solid #8b1a2e" 
+                                        : `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "#d0ccc4"}`,
+                                      color: selectedTime === slot.start 
+                                        ? "#fff" 
+                                        : isDark ? "rgba(255,255,255,0.7)" : "#555",
+                                    }}
+                                  >
+                                    {slot.label}
+                                  </button>
+                                ))
+                              ) : (
+                                <div className="col-span-3 text-center text-xs py-2" style={{ color: isDark ? "rgba(255,255,255,0.3)" : "#aaa" }}>
+                                  لا توجد أوقات متاحة في هذا اليوم
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        
+                        <div className="flex items-center gap-3 text-[10px] flex-wrap" style={{ color: isDark ? "rgba(255,255,255,0.3)" : "#aaa" }}>
+                          <span className="flex items-center gap-1">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#8b1a2e" }} />
+                            محدد
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#4ade80" }} />
+                            متاح
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ background: isDark ? "rgba(255,255,255,0.1)" : "#f0f0f0" }} />
+                            غير متاح
+                          </span>
+                        </div>
+                      </div>
+                    </>
                   )}
                 </>
               )}

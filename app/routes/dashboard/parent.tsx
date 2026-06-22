@@ -620,7 +620,7 @@ export default function ParentDashboard() {
                 style={{ border: `1px dashed ${isDark ? "rgba(139,26,46,0.4)" : "rgba(139,26,46,0.2)"}`, borderRadius: "2px" }}>
                 <div className="text-5xl mb-4"><FaUsers /></div>
                 <p className="mb-4" style={{ color: isDark ? "rgba(255,255,255,0.4)" : "#888", fontFamily: "sans-serif" }}>لم تسجل أي أبناء بعد</p>
-                <a href="/register"
+                <a href="/dashboard/children"
                   className="inline-block px-6 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:opacity-90"
                   style={{ background: "#8b1a2e", borderRadius: "2px", fontFamily: "sans-serif", textDecoration: "none" }}>
                   أضف ابنك الأول
