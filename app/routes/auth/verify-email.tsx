@@ -11,42 +11,110 @@ export default function VerifyEmail() {
   const [email, setEmail] = useState("");
   const [resending, setResending] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
+  const [role, setRole] = useState<string | null>(null);
+
+  // ─── 🔥 مواقع مختلفة حسب الدور ──────────────────────────────────────────────
+  const getRedirectUrl = (userRole: string) => {
+    switch (userRole) {
+      case "admin":
+        return "https://teache-three.vercel.app/dashboard/teacher";
+      case "teacher":
+        return "https://teache-three.vercel.app/dashboard/teacher";
+      case "parent":
+        return "https://perantedupatform.vercel.app/dashboard/parent";
+      default:
+        return "https://educonnect.com/login";
+    }
+  };
+
+  // ─── 🔥 أو استخدم مواقع مختلفة تماماً ──────────────────────────────────────
+  // const getRedirectUrl = (userRole: string) => {
+  //   switch (userRole) {
+  //     case "admin":
+  //       return "https://admin-platform.com/dashboard";
+  //     case "teacher":
+  //       return "https://teacher-platform.com/dashboard";
+  //     case "parent":
+  //       return "https://parent-platform.com/dashboard";
+  //     default:
+  //       return "https://main-platform.com/login";
+  //   }
+  // };
+
+  // ─── جلب دور المستخدم ──────────────────────────────────────────────────────
+  const getUserRole = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", userId)
+        .single();
+
+      if (error) {
+        console.error("Error fetching user role:", error);
+        return null;
+      }
+
+      return data?.role || null;
+    } catch (err) {
+      console.error("Error:", err);
+      return null;
+    }
+  };
 
   useEffect(() => {
     async function handleVerification() {
       try {
-        // نجرب نجيب session الحالي
-        const { data, error } = await supabase.auth.getSession();
+        // 1. التحقق من وجود Session
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
-        console.log("Session data:", data);
-        console.log("Session error:", error);
+        console.log("Session data:", sessionData);
+        console.log("Session error:", sessionError);
 
-        if (data?.session) {
+        if (sessionData?.session) {
+          const userRole = await getUserRole(sessionData.session.user.id);
+          setRole(userRole);
+          
           setStatus("success");
-          setMessage("✅ تم تأكيد البريد الإلكتروني بنجاح! جاري التوجيه...");
-          setTimeout(() => navigate("/login"), 3000);
+          setMessage(`✅ تم تأكيد البريد الإلكتروني بنجاح! جاري التوجيه...`);
+          
+          // 🔥 التوجيه إلى الموقع المناسب حسب الدور
+          const redirectUrl = getRedirectUrl(userRole || "parent");
+          setTimeout(() => {
+            window.location.href = redirectUrl;
+          }, 2000);
           return;
         }
 
-        // نجرب نبادل الـ code
+        // 2. محاولة تبادل الـ Code
         const code = searchParams.get("code");
         if (code) {
-          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           
           if (exchangeError) {
             console.error("Exchange error:", exchangeError);
             throw exchangeError;
           }
 
-          setStatus("success");
-          setMessage("✅ تم تأكيد البريد الإلكتروني بنجاح! جاري التوجيه...");
-          setTimeout(() => navigate("/login"), 3000);
-          return;
+          if (exchangeData?.session) {
+            const userRole = await getUserRole(exchangeData.session.user.id);
+            setRole(userRole);
+            
+            setStatus("success");
+            setMessage(`✅ تم تأكيد البريد الإلكتروني بنجاح! جاري التوجيه...`);
+            
+            // 🔥 التوجيه إلى الموقع المناسب حسب الدور
+            const redirectUrl = getRedirectUrl(userRole || "parent");
+            setTimeout(() => {
+              window.location.href = redirectUrl;
+            }, 2000);
+            return;
+          }
         }
 
-        // لو مفيش حاجة - الرابط منتهي الصلاحية
+        // 3. لو مفيش حاجة - الرابط منتهي الصلاحية
         const type = searchParams.get("type");
-        if (type === "signup") {
+        if (type === "signup" || type === "email_change") {
           setStatus("error");
           setMessage("انتهت صلاحية رابط التأكيد. يمكنك طلب رابط جديد.");
         } else {
@@ -64,7 +132,7 @@ export default function VerifyEmail() {
     handleVerification();
   }, [searchParams, navigate]);
 
-  // 🔥 إعادة إرسال رابط التأكيد
+  // ─── إعادة إرسال رابط التأكيد ──────────────────────────────────────────────
   const handleResendEmail = async () => {
     if (!email) {
       setMessage("الرجاء إدخال البريد الإلكتروني أولاً");
@@ -97,6 +165,11 @@ export default function VerifyEmail() {
     }
   };
 
+  // ─── Go to Login ──────────────────────────────────────────────────────────────
+  const goToLogin = () => {
+    navigate("/login");
+  };
+
   return (
     <div
       className="min-h-screen flex items-center justify-center p-4"
@@ -113,10 +186,12 @@ export default function VerifyEmail() {
           borderColor: "rgba(255,255,255,0.1)",
         }}
       >
+        {/* Icon */}
         <div className="text-5xl mb-6">
           {status === "loading" ? "⏳" : status === "success" ? "✅" : "📧"}
         </div>
         
+        {/* Title */}
         <h2
           className="text-2xl font-bold mb-4"
           style={{ color: "#ffffff" }}
@@ -125,6 +200,7 @@ export default function VerifyEmail() {
            status === "success" ? "تم التأكيد!" : "انتهت صلاحية الرابط"}
         </h2>
         
+        {/* Message */}
         <p
           className="text-base mb-6"
           style={{ color: "rgba(255,255,255,0.6)" }}
@@ -132,12 +208,37 @@ export default function VerifyEmail() {
           {message}
         </p>
 
+        {/* Loading Spinner */}
         {status === "loading" && (
           <div className="mt-4">
             <div
               className="w-10 h-10 border-4 border-t-transparent rounded-full animate-spin mx-auto"
               style={{ borderColor: "#8b1a2e", borderTopColor: "transparent" }}
             />
+          </div>
+        )}
+
+        {/* 🔥 عرض الدور والمكان الذي سيتم التوجيه إليه */}
+        {status === "success" && role && (
+          <div
+            className="mt-4 p-3 rounded-lg text-sm"
+            style={{
+              background: "rgba(139,26,46,0.15)",
+              border: "1px solid rgba(139,26,46,0.3)",
+              color: "#f0b8be",
+            }}
+          >
+            🔄 جاري التوجيه إلى:
+            <br />
+            <span style={{ fontSize: "12px", color: "#c9a84c" }}>
+              {role === "admin" && "👑 لوحة الإدارة"}
+              {role === "teacher" && "👨‍🏫 لوحة المعلم"}
+              {role === "parent" && "👨‍👧 لوحة ولي الأمر"}
+            </span>
+            <br />
+            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)" }}>
+              {getRedirectUrl(role)}
+            </span>
           </div>
         )}
 
@@ -188,28 +289,38 @@ export default function VerifyEmail() {
           </div>
         )}
 
-        {/* أزرار التنقل */}
+        {/* ─── أزرار التنقل ────────────────────────────────────────────────────── */}
         <div className="mt-6 space-y-3">
-          <button
-            onClick={() => navigate("/login")}
-            className="w-full px-8 py-3 rounded-xl font-semibold transition-all duration-300 hover:opacity-90"
-            style={{ background: "#8b1a2e", color: "#fff" }}
-          >
-            الذهاب لتسجيل الدخول
-          </button>
-
-          {status === "error" && (
+          {status === "success" ? (
             <button
-              onClick={() => navigate("/register")}
+              onClick={goToLogin}
               className="w-full px-8 py-3 rounded-xl font-semibold transition-all duration-300 hover:opacity-90"
-              style={{
-                background: "transparent",
-                border: "1px solid rgba(255,255,255,0.2)",
-                color: "rgba(255,255,255,0.7)",
-              }}
+              style={{ background: "#8b1a2e", color: "#fff" }}
             >
-              إنشاء حساب جديد
+              الذهاب لتسجيل الدخول
             </button>
+          ) : (
+            <>
+              <button
+                onClick={goToLogin}
+                className="w-full px-8 py-3 rounded-xl font-semibold transition-all duration-300 hover:opacity-90"
+                style={{ background: "#8b1a2e", color: "#fff" }}
+              >
+                الذهاب لتسجيل الدخول
+              </button>
+
+              <button
+                onClick={() => navigate("/register")}
+                className="w-full px-8 py-3 rounded-xl font-semibold transition-all duration-300 hover:opacity-90"
+                style={{
+                  background: "transparent",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  color: "rgba(255,255,255,0.7)",
+                }}
+              >
+                إنشاء حساب جديد
+              </button>
+            </>
           )}
         </div>
       </div>
